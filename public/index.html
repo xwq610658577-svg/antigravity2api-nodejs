@@ -9,6 +9,16 @@
     <!-- 引入 Ubuntu Mono 等宽字体 -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:wght@400;700&display=swap">
     <link rel="stylesheet" href="style.css">
+    <script>
+        // 页面加载前检查登录状态，避免闪现
+        if (localStorage.getItem('authToken')) {
+            document.documentElement.classList.add('logged-in');
+        }
+    </script>
+    <style>
+        .logged-in #loginForm { display: none !important; }
+        .logged-in #mainContent { display: block !important; }
+    </style>
 </head>
 <body>
     <div class="container">

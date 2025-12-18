@@ -24,6 +24,7 @@ const authFetch = async (url, options = {}) => {
 };
 
 function showMainContent() {
+    document.documentElement.classList.add('logged-in');
     document.getElementById('loginForm').classList.add('hidden');
     document.getElementById('mainContent').classList.remove('hidden');
 }
@@ -31,6 +32,7 @@ function showMainContent() {
 function silentLogout() {
     localStorage.removeItem('authToken');
     authToken = null;
+    document.documentElement.classList.remove('logged-in');
     document.getElementById('loginForm').classList.remove('hidden');
     document.getElementById('mainContent').classList.add('hidden');
 }
