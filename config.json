@@ -34,7 +34,7 @@
     "useNativeAxios": false,
     "useContextSystemPrompt": true,
     "passSignatureToClient": false,
-    "debugDumpRequestResponse": false,
+    "debugDumpRequestResponse": true,
     "useCachedSignature": true,
     "useFallbackSignature": true
   }
