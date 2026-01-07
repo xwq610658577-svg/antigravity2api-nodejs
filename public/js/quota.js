@@ -5,6 +5,8 @@ let currentQuotaToken = null;
 const quotaCache = {
     data: {},
     ttl: 5 * 60 * 1000,
+    maxSize: 50, // 最大缓存条目数
+    cleanupTimer: null,
     
     get(tokenId) {
         const cached = this.data[tokenId];
@@ -17,6 +19,11 @@ const quotaCache = {
     },
     
     set(tokenId, data) {
+        // 检查缓存大小，超出时清理最旧的条目
+        const keys = Object.keys(this.data);
+        if (keys.length >= this.maxSize) {
+            this._evictOldest(Math.ceil(this.maxSize * 0.2)); // 清理20%
+        }
         this.data[tokenId] = { data, timestamp: Date.now() };
     },
     
@@ -26,8 +33,66 @@ const quotaCache = {
         } else {
             this.data = {};
         }
+    },
+    
+    // 清理过期缓存
+    cleanup() {
+        const now = Date.now();
+        const keys = Object.keys(this.data);
+        let cleaned = 0;
+        for (const key of keys) {
+            if (now - this.data[key].timestamp > this.ttl) {
+                delete this.data[key];
+                cleaned++;
+            }
+        }
+        return cleaned;
+    },
+    
+    // 清理最旧的 n 个条目
+    _evictOldest(n) {
+        const entries = Object.entries(this.data)
+            .sort((a, b) => a[1].timestamp - b[1].timestamp);
+        for (let i = 0; i < Math.min(n, entries.length); i++) {
+            delete this.data[entries[i][0]];
+        }
+    },
+    
+    // 启动定期清理
+    startCleanupTimer() {
+        if (this.cleanupTimer) return;
+        this.cleanupTimer = setInterval(() => {
+            this.cleanup();
+        }, 60 * 1000); // 每分钟清理一次过期缓存
+    },
+    
+    // 停止定期清理
+    stopCleanupTimer() {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
+    },
+    
+    // 获取缓存统计信息
+    getStats() {
+        return {
+            size: Object.keys(this.data).length,
+            maxSize: this.maxSize
+        };
     }
 };
+
+// 页面加载时启动缓存清理定时器
+if (typeof document !== 'undefined') {
+    quotaCache.startCleanupTimer();
+    
+    // 页面卸载时清理
+    window.addEventListener('beforeunload', () => {
+        quotaCache.stopCleanupTimer();
+        quotaCache.clear();
+    });
+}
 
 const QUOTA_GROUPS = [
     {

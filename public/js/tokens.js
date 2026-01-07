@@ -7,6 +7,31 @@ let skipAnimation = false; // 是否跳过动画
 // 移动端操作区手动收起/展开
 let actionBarCollapsed = localStorage.getItem('actionBarCollapsed') === 'true';
 
+// 存储事件监听器引用，便于清理
+const eventListenerRegistry = new WeakMap();
+
+// 注册事件监听器（便于后续清理）
+function registerEventListener(element, event, handler, options) {
+    if (!element) return;
+    element.addEventListener(event, handler, options);
+    
+    if (!eventListenerRegistry.has(element)) {
+        eventListenerRegistry.set(element, []);
+    }
+    eventListenerRegistry.get(element).push({ event, handler, options });
+}
+
+// 清理元素上的所有注册事件监听器
+function cleanupEventListeners(element) {
+    if (!element || !eventListenerRegistry.has(element)) return;
+    
+    const listeners = eventListenerRegistry.get(element);
+    for (const { event, handler, options } of listeners) {
+        element.removeEventListener(event, handler, options);
+    }
+    eventListenerRegistry.delete(element);
+}
+
 // 导出 Token（需要密码验证）
 async function exportTokens() {
     const password = await showPasswordPrompt('请输入管理员密码以导出 Token');
@@ -56,6 +81,9 @@ async function importTokens() {
 
 // 当前导入模式：'file' | 'json' | 'manual'
 let currentImportTab = 'file';
+
+// 存储导入弹窗的事件处理器引用
+let importModalHandlers = null;
 
 // 显示导入上传弹窗（支持拖拽、手动输入JSON和手动填入Token）
 function showImportUploadModal() {
@@ -146,63 +174,73 @@ function showImportUploadModal() {
     // 初始化当前标签
     currentImportTab = 'file';
     
-    // 绑定事件
+    // 绑定事件（保存引用以便清理）
     const dropzone = document.getElementById('importDropzone');
     const fileInput = document.getElementById('importFileInput');
-    
-    // 点击选择文件
-    dropzone.addEventListener('click', () => fileInput.click());
-    
-    // 文件选择
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files[0]) {
-            handleImportFile(e.target.files[0]);
-        }
-    });
-    
-    // 拖拽事件
-    dropzone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dropzone.classList.add('dragover');
-    });
-    
-    dropzone.addEventListener('dragleave', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dropzone.classList.remove('dragover');
-    });
-    
-    dropzone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dropzone.classList.remove('dragover');
-        
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            const file = files[0];
-            if (file.name.endsWith('.json')) {
-                handleImportFile(file);
-            } else {
-                showToast('请选择 JSON 文件', 'warning');
-            }
-        }
-    });
-    
-    // 手动填入时监听输入变化
     const manualAccessToken = document.getElementById('manualAccessToken');
     const manualRefreshToken = document.getElementById('manualRefreshToken');
-    const updateManualBtnState = () => {
-        if (currentImportTab === 'manual') {
-            const confirmBtn = document.getElementById('confirmImportBtn');
-            confirmBtn.disabled = !manualAccessToken.value.trim() || !manualRefreshToken.value.trim();
-        }
-    };
-    manualAccessToken.addEventListener('input', updateManualBtnState);
-    manualRefreshToken.addEventListener('input', updateManualBtnState);
     
-    // 点击背景关闭
-    modal.onclick = (e) => { if (e.target === modal) closeImportModal(); };
+    // 创建事件处理器
+    const handlers = {
+        dropzoneClick: () => fileInput.click(),
+        fileChange: (e) => {
+            if (e.target.files[0]) {
+                handleImportFile(e.target.files[0]);
+            }
+        },
+        dragover: (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.add('dragover');
+        },
+        dragleave: (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('dragover');
+        },
+        drop: (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.endsWith('.json')) {
+                    handleImportFile(file);
+                } else {
+                    showToast('请选择 JSON 文件', 'warning');
+                }
+            }
+        },
+        updateManualBtnState: () => {
+            if (currentImportTab === 'manual') {
+                const confirmBtn = document.getElementById('confirmImportBtn');
+                confirmBtn.disabled = !manualAccessToken.value.trim() || !manualRefreshToken.value.trim();
+            }
+        },
+        modalClick: (e) => { if (e.target === modal) closeImportModal(); }
+    };
+    
+    // 保存处理器引用
+    importModalHandlers = {
+        modal,
+        dropzone,
+        fileInput,
+        manualAccessToken,
+        manualRefreshToken,
+        handlers
+    };
+    
+    // 绑定事件
+    dropzone.addEventListener('click', handlers.dropzoneClick);
+    fileInput.addEventListener('change', handlers.fileChange);
+    dropzone.addEventListener('dragover', handlers.dragover);
+    dropzone.addEventListener('dragleave', handlers.dragleave);
+    dropzone.addEventListener('drop', handlers.drop);
+    manualAccessToken.addEventListener('input', handlers.updateManualBtnState);
+    manualRefreshToken.addEventListener('input', handlers.updateManualBtnState);
+    modal.addEventListener('click', handlers.modalClick);
 }
 
 // 切换导入方式标签
@@ -455,6 +493,32 @@ function clearImportFile() {
 
 // 关闭导入弹窗
 function closeImportModal() {
+    // 清理事件监听器
+    if (importModalHandlers) {
+        const { modal, dropzone, fileInput, manualAccessToken, manualRefreshToken, handlers } = importModalHandlers;
+        
+        if (dropzone) {
+            dropzone.removeEventListener('click', handlers.dropzoneClick);
+            dropzone.removeEventListener('dragover', handlers.dragover);
+            dropzone.removeEventListener('dragleave', handlers.dragleave);
+            dropzone.removeEventListener('drop', handlers.drop);
+        }
+        if (fileInput) {
+            fileInput.removeEventListener('change', handlers.fileChange);
+        }
+        if (manualAccessToken) {
+            manualAccessToken.removeEventListener('input', handlers.updateManualBtnState);
+        }
+        if (manualRefreshToken) {
+            manualRefreshToken.removeEventListener('input', handlers.updateManualBtnState);
+        }
+        if (modal) {
+            modal.removeEventListener('click', handlers.modalClick);
+        }
+        
+        importModalHandlers = null;
+    }
+    
     const modal = document.getElementById('importUploadModal');
     if (modal) {
         modal.remove();
@@ -556,7 +620,7 @@ function showPasswordPrompt(message) {
                     <input type="password" id="promptPassword" placeholder="请输入密码">
                 </div>
                 <div class="modal-actions">
-                    <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">取消</button>
+                    <button class="btn btn-secondary" id="promptCancelBtn">取消</button>
                     <button class="btn btn-success" id="promptConfirmBtn">确认</button>
                 </div>
             </div>
@@ -565,25 +629,47 @@ function showPasswordPrompt(message) {
         
         const passwordInput = document.getElementById('promptPassword');
         const confirmBtn = document.getElementById('promptConfirmBtn');
+        const cancelBtn = document.getElementById('promptCancelBtn');
         
-        confirmBtn.onclick = () => {
-            const password = passwordInput.value;
+        // 清理函数
+        const cleanup = () => {
+            confirmBtn.removeEventListener('click', handleConfirm);
+            cancelBtn.removeEventListener('click', handleCancel);
+            passwordInput.removeEventListener('keydown', handleKeydown);
+            modal.removeEventListener('click', handleModalClick);
             modal.remove();
+        };
+        
+        const handleConfirm = () => {
+            const password = passwordInput.value;
+            cleanup();
             resolve(password || null);
         };
         
-        passwordInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                confirmBtn.click();
-            }
-        });
+        const handleCancel = () => {
+            cleanup();
+            resolve(null);
+        };
         
-        modal.onclick = (e) => {
+        const handleKeydown = (e) => {
+            if (e.key === 'Enter') {
+                handleConfirm();
+            } else if (e.key === 'Escape') {
+                handleCancel();
+            }
+        };
+        
+        const handleModalClick = (e) => {
             if (e.target === modal) {
-                modal.remove();
+                cleanup();
                 resolve(null);
             }
         };
+        
+        confirmBtn.addEventListener('click', handleConfirm);
+        cancelBtn.addEventListener('click', handleCancel);
+        passwordInput.addEventListener('keydown', handleKeydown);
+        modal.addEventListener('click', handleModalClick);
         
         passwordInput.focus();
     });
@@ -679,6 +765,14 @@ async function loadTokens() {
 
 // 正在刷新的 Token 集合（使用 tokenId）
 const refreshingTokens = new Set();
+
+// 限制 refreshingTokens 集合大小，防止内存泄漏
+function cleanupRefreshingTokens() {
+    // 如果集合过大，清空它（正常情况下不应该有太多同时刷新的 token）
+    if (refreshingTokens.size > 100) {
+        refreshingTokens.clear();
+    }
+}
 
 function renderTokens(tokens) {
     // 只在首次加载时更新缓存

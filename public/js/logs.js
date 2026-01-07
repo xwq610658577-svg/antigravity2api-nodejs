@@ -8,6 +8,7 @@ let logsState = {
     searchKeyword: '',
     offset: 0,
     limit: 100,
+    maxLogs: 500, // 最大保留日志条数，防止内存无限增长
     autoRefresh: false,
     autoRefreshTimer: null,
     stats: { total: 0, info: 0, warn: 0, error: 0, request: 0 }
@@ -42,6 +43,12 @@ async function loadLogs(append = false) {
             } else {
                 logsState.logs = data.data.logs;
             }
+            
+            // 限制日志数量，防止内存无限增长
+            if (logsState.logs.length > logsState.maxLogs) {
+                logsState.logs = logsState.logs.slice(-logsState.maxLogs);
+            }
+            
             logsState.total = data.data.total;
             renderLogs();
         }
@@ -347,4 +354,15 @@ function cleanupLogsPage() {
         logsState.autoRefreshTimer = null;
     }
     logsState.autoRefresh = false;
+    
+    // 清空日志数据释放内存
+    logsState.logs = [];
+    logsState.total = 0;
+    logsState.offset = 0;
+    
+    // 清空 DOM 内容
+    const container = document.getElementById('logList');
+    if (container) {
+        container.innerHTML = '';
+    }
 }
