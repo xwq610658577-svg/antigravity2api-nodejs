@@ -14,6 +14,9 @@ COPY . .
 # 复制 .env.example 为默认 .env
 RUN cp .env.example .env
 
+# 复制 config.json.example 为默认 config.json
+RUN cp config.json.example config.json
+
 # 创建数据和图片目录
 RUN mkdir -p data public/images
 

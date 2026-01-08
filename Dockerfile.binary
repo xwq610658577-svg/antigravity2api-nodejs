@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# 复制 config.json.example 为默认 config.json
+RUN cp config.json.example config.json
+
 # 复制编译后的文件（由 CI 工作流预先编译）
 # 使用通配符匹配不同架构的二进制文件
 COPY dist/antigravity-linux-* /app/antigravity
