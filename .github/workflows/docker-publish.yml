@@ -20,50 +20,21 @@ jobs:
         include:
           - target: linux
             arch: amd64
-            tag_suffix: ""
+            platform: linux/amd64
           - target: linux-arm64
             arch: arm64
-            tag_suffix: "-arm64"
+            platform: linux/arm64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 添加：转换为小写
       - name: Set lowercase image name
         id: image
         run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Prepare config file
-        run: |
-          if [ ! -f config.json ]; then
-            cp config.json.example config.json
-          fi
-        shell: bash
-
-      - name: Build binary for ${{ matrix.arch }}
-        run: npm run build:${{ matrix.target }}
-
-      - name: List dist contents
-        run: |
-          echo "=== dist directory contents ==="
-          ls -la dist/
-          echo "=== bin directory ==="
-          ls -la dist/bin/ || echo "No bin directory"
-
-      - name: Set executable permissions
-        run: |
-          chmod +x dist/antigravity-* || true
-          chmod +x dist/bin/* || true
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -75,27 +46,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 修改：使用小写镜像名
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
-          tags: |
-            type=ref,event=branch,suffix=${{ matrix.tag_suffix }}
-            type=raw,value=binary${{ matrix.tag_suffix }},enable=true
-            type=raw,value=latest${{ matrix.tag_suffix }},enable=${{ github.ref == 'refs/heads/main' }}
+      - name: Generate tags
+        id: tags
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}"
+          BRANCH="${{ github.ref_name }}"
+          SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
+          ARCH="${{ matrix.arch }}"
+          
+          # 只生成必要的标签
+          TAGS="${IMAGE}:${BRANCH}-${ARCH}"
+          
+          # main 分支额外添加 latest
+          if [ "$BRANCH" == "main" ]; then
+            TAGS="${TAGS},${IMAGE}:latest-${ARCH}"
+          fi
+          
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 
       - name: Build and push (${{ matrix.arch }})
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.binary
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
   create-manifest:
     needs: build
@@ -105,7 +83,6 @@ jobs:
       packages: write
     
     steps:
-      # 添加：转换为小写
       - name: Set lowercase image name
         id: image
         run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
@@ -117,9 +94,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 修改：使用小写镜像名
       - name: Create and push multi-arch manifest
         run: |
-          docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest \
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:main \
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:main-arm64
+          IMAGE="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}"
+          
+          # 创建 latest 多架构镜像
+          docker buildx imagetools create -t ${IMAGE}:latest \
+            ${IMAGE}:latest-amd64 \
+            ${IMAGE}:latest-arm64
+          
+          # 创建 main 多架构镜像
+          docker buildx imagetools create -t ${IMAGE}:main \
+            ${IMAGE}:main-amd64 \
+            ${IMAGE}:main-arm64
+
+  # 清理旧标签（可选）
+  cleanup-old-tags:
+    needs: create-manifest
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+    steps:
+      - name: Delete old tags
+        run: |
+          echo "清理 binary, binary-arm64 等旧标签"
+          # 这里可以使用 GitHub API 删除旧标签
+          # 需要额外配置，暂时省略
